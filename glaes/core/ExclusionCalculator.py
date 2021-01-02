@@ -2,11 +2,12 @@ import geokit as gk
 import re
 import numpy as np
 from os.path import isfile
-from collections import namedtuple
+from collections import namedtuple, defaultdict
 from warnings import warn
 import pandas as pd
 import hashlib
 from osgeo import gdal
+from typing import Union, List, Dict, Tuple
 
 
 from .util import GlaesError, glaes_logger
@@ -125,7 +126,10 @@ class ExclusionCalculator(object):
         "woodland_deciduous_proximity": (None, 300),
         "woodland_mixed_proximity": (None, 300)}
 
-    def __init__(s, region, srs=3035, pixelRes=100, where=None, padExtent=0, initialValue=True, verbose=True, **kwargs):
+    _availability: np.ndarray
+    dtype: np.dtype
+
+    def __init__(s, region, srs=3035, pixelRes=100, where=None, padExtent=0, initialValue=True, dtype=np.uint8, verbose=True, **kwargs):
         """Initialize the ExclusionCalculator
 
         Parameters:
@@ -185,6 +189,9 @@ class ExclusionCalculator(object):
             * If a path to a ".tif" file is given, then the ExclusionCalculator is initialized
                 by warping (using the 'near' algorithm) from the given raster, and excluding
                 pixels with a value of 0
+        
+        dtype : numpy Datatype
+            The datatype to store the availability matrix as
 
         kwargs:
             * Keyword arguments are passed on to a call to geokit.RegionMask.load
@@ -236,7 +243,8 @@ class ExclusionCalculator(object):
         s.maskPixels = s.region.mask.sum()
 
         # Make the total availability matrix
-        s._availability = np.array(s.region.mask, dtype=np.uint8) * 100
+        s.dtype = dtype
+        s._availability = np.array(s.region.mask, dtype=s.dtype) * 100
 
         if initialValue == True:
             pass
@@ -244,7 +252,7 @@ class ExclusionCalculator(object):
             s._availability *= 0
         elif isinstance(initialValue, str):
             assert isfile(initialValue)
-            s._availability = np.array(s.region.mask, dtype=np.uint8) * 100
+            s._availability = np.array(s.region.mask, dtype=s.dtype) * 100
             s.excludeRasterType(initialValue, value=0)
         else:
             raise ValueError('initialValue "{}" is not known'.format(initialValue))
@@ -253,6 +261,12 @@ class ExclusionCalculator(object):
         s.itemCoords = None
         s._itemCoords = None
         s._areas = None
+
+    def applyAvailabilityThreshold(self, threshold:int = 50) -> None:
+        """
+        TODO: Addme
+        """
+        self._availability = (self._availability >= threshold).astype(self.dtype) * 100
 
     def save(s, output, threshold=None, **kwargs):
         """Save the current availability matrix to a raster file
@@ -290,7 +304,7 @@ class ExclusionCalculator(object):
 
         data = s.availability
         if not threshold is None:
-            data = (data >= threshold).astype(np.uint8) * 100
+            data = (data >= threshold).astype(s.dtype) * 100
 
         data[~s.region.mask] = 255
         return s.region.createRaster(output=output, data=data,
@@ -1767,3 +1781,358 @@ class ExclusionCalculator(object):
             data['geom'] = geoms
 
         return gk.vector.createVector(data, output=output)
+
+
+    def applyRasterWeighting(self, raster: Union[str, gdal.Dataset], xp, fp, left=None, right=None, period=None, **kwargs) -> None:
+        """
+
+        Parameters
+        ----------
+            xp : 1-D sequence of floats
+                The x-coordinates of the data points, must be increasing if argument
+                `period` is not specified. Otherwise, `xp` is internally sorted after
+                normalizing the periodic boundaries with ``xp = xp % period``.
+
+            fp : 1-D sequence of float or complex
+                The y-coordinates of the data points, same length as `xp`.
+
+            left : optional float or complex corresponding to fp
+                Value to return for `x < xp[0]`, default is `fp[0]`.
+
+            right : optional float or complex corresponding to fp
+                Value to return for `x > xp[-1]`, default is `fp[-1]`.
+
+            period : None or float, optional
+                A period for the x-coordinates. This parameter allows the proper
+                interpolation of angular x-coordinates. Parameters `left` and `right`
+                are ignored if `period` is specified.
+        """
+        self._availability = (np.interp( 
+            self.region.warp(raster, **kwargs),
+            xp=xp,
+            fp=fp,
+            left=left,
+            right=right,
+            period=period
+         ) * self._availability).astype(self.dtype)
+
+    def distributeItemsTiered(self, separation=Union[float, Tuple[float,float]], percentile_groups=5, _max_items:int=1000000, pixelDivision=5, threshold=50, outputSRS=None, output=None, asArea=False, minArea=100000, maxAcceptableDistance=None, axialDirection=None, sepScaling=None, _voronoiBoundaryPoints=10, _voronoiBoundaryPadding=5, _stamping=True):
+
+        # Preprocess availability
+        workingAvailability = self._availability.copy()
+        workingAvailability[~self.region.mask] = 0
+
+        # Handle a gradient file, if one is given
+        if not axialDirection is None:
+            if isinstance(axialDirection, str):  # Assume a path to a raster file is given
+                axialDirection = self.region.warp(
+                    axialDirection, resampleAlg='near')
+            # Assume a path to a raster file is given
+            elif isinstance(axialDirection, np.ndarray):
+                if not axialDirection.shape == self.region.mask.shape:
+                    raise GlaesError(
+                        "axialDirection matrix does not match context")
+            else:  # axialDirection should be a single value
+                axialDirection = np.radians(float(axialDirection))
+
+            useGradient = True
+        else:
+            useGradient = False
+
+        # Read separation scaling file, if given
+        if not sepScaling is None:
+            if isinstance(sepScaling, str) or isinstance(sepScaling, gdal.Dataset):  # Assume a path to a raster file is given
+                sepScaling = self.region.warp(sepScaling, resampleAlg='near', applyMask=False,)
+                matrixScaling = True
+            # Assume a numpy array is given
+            elif isinstance(sepScaling, np.ndarray):
+                if not sepScaling.shape == self.region.mask.shape:
+                    raise GlaesError(
+                        "sepScaling matrix does not match context")
+                matrixScaling = True
+            else:  # sepScaling should be a single value
+                matrixScaling = False
+
+        else:
+            sepScaling = 1
+            matrixScaling = False
+
+        # Turn separation into pixel distances
+        if not self.region.pixelWidth == self.region.pixelHeight:
+            warn(
+                "Pixel width does not equal pixel height. Therefore, the average will be used to estimate distances")
+            pixelRes = (self.region.pixelWidth + self.region.pixelHeight) / 2
+        else:
+            pixelRes = self.region.pixelWidth
+
+        if useGradient:
+            try:
+                sepA, sepT = separation
+            except:
+                raise GlaesError(
+                    "When giving axial direction data, a separation tuple is expected")
+
+            sepA, sepT = float(sepA), float(sepT)  # Cast as float to avoid integer overflow errors
+            sepA = sepA * sepScaling / pixelRes
+            sepT = sepT * sepScaling / pixelRes
+
+            sepA2 = sepA**2
+            sepT2 = sepT**2
+
+            sepFloorA = np.maximum(sepA - np.sqrt(2), 0)
+            sepFloorT = np.maximum(sepT - np.sqrt(2), 0)
+            if not matrixScaling and (sepFloorA < 1 or sepFloorT < 1):
+                raise GlaesError(
+                    "Seperations are too small compared to pixel size")
+
+            sepFloorA2 = np.power(sepFloorA, 2)
+            sepFloorT2 = np.power(sepFloorT, 2)
+
+            sepCeil = np.maximum(sepA, sepT) + 1
+
+            stampFloor = min(sepFloorA2.min(), sepFloorT2.min()) if matrixScaling else min(sepFloorA2, sepFloorT2)
+            stampWidth = int(np.ceil(np.sqrt(stampFloor)) + 1)
+        else:
+            separation = float(separation)  # Cast as float to avoid integer overflow errors
+            separation = separation * sepScaling / pixelRes
+            sep2 = np.power(separation, 2)
+            sepFloor = np.maximum(separation - np.sqrt(2), 0)
+            sepFloor2 = sepFloor**2
+            sepCeil = separation + 1
+
+            stampFloor = sepFloor2.min() if matrixScaling else sepFloor2
+            stampWidth = int(np.ceil(np.sqrt(stampFloor)) + 1)
+
+        if _stamping:
+            _xy = np.linspace(-stampWidth, stampWidth, stampWidth * 2 + 1)
+            _xs, _ys = np.meshgrid(_xy, _xy)
+
+            # print("STAMP FLOOR:", stampFloor, stampWidth)
+            stamp = (np.power(_xs, 2) + np.power(_ys, 2)
+                     ) >= (stampFloor)  # (stampFloor - np.sqrt(stampFloor) * 2)
+
+        if isinstance(sepCeil, np.ndarray) and sepCeil.size > 1:
+            sepCeil = sepCeil.max()
+
+        # initialize placement groups
+        PLACEMENT_GROUPING_FACTOR = 10
+        placement_groups = defaultdict(lambda: defaultdict( list ))
+
+        # start searching
+        PERCENTILE_GROUPS = percentile_groups # TODO: Clean this up
+        yN, xN = workingAvailability.shape
+
+        placement_id = 0
+        nearby_placments_xi = []
+        nearby_placments_yi = []
+        for threshold_i, threshold in enumerate(np.percentile(workingAvailability[self._availability>0], np.linspace(0,100,PERCENTILE_GROUPS, endpoint=False)[::-1])):
+            if (threshold_i+1)%25==0:
+                print(threshold_i+1, "of", percentile_groups)
+            tieredWorkingAvailability = workingAvailability>threshold
+            if not tieredWorkingAvailability.any():
+                continue
+
+            y_group_last = -1
+            for yi in range(yN):
+                y_group = int(yi // (sepCeil * PLACEMENT_GROUPING_FACTOR))
+                
+                x_group_last = -1
+                for xi in np.argwhere(tieredWorkingAvailability[yi, :]):
+                    xi = xi[0] # get rid of extra dimension
+                    # point could have been excluded from a previous stamp
+                    if not workingAvailability[yi, xi]:
+                        continue
+                    
+                    x_group = int(xi // (sepCeil * PLACEMENT_GROUPING_FACTOR))
+                    if x_group != x_group_last or y_group != y_group_last:
+                        nearby_placments_xi = np.concatenate([
+                            placement_groups[(y_group, x_group)]['xi'],
+                            placement_groups[(y_group-1, x_group)]['xi'],
+                            placement_groups[(y_group+1, x_group)]['xi'],
+                            placement_groups[(y_group, x_group-1)]['xi'],
+                            placement_groups[(y_group, x_group+1)]['xi'],
+                        ])
+                        nearby_placments_yi = np.concatenate([
+                            placement_groups[(y_group, x_group)]['yi'],
+                            placement_groups[(y_group-1, x_group)]['yi'],
+                            placement_groups[(y_group+1, x_group)]['yi'],
+                            placement_groups[(y_group, x_group-1)]['yi'],
+                            placement_groups[(y_group, x_group+1)]['yi'],
+                        ])
+
+                    # Clip the total placement arrays
+                    if matrixScaling:
+                        if useGradient:
+                            _sepFloorA2 = sepFloorA2[yi, xi]
+                            _sepFloorT2 = sepFloorT2[yi, xi]
+
+                            if _sepFloorA2 < 1 or _sepFloorT2 < 1:
+                                raise GlaesError(
+                                    "Seperations are too small compared to pixel size")
+
+                            _sepA2 = sepA2[yi, xi]
+                            _sepT2 = sepT2[yi, xi]
+                        else:
+                            _sepFloor2 = sepFloor2[yi, xi]
+                            if _sepFloor2 < 1:
+                                raise GlaesError(
+                                    "Seperations are too small compared to pixel size")
+                            _sep2 = sep2[yi, xi]
+                    else:
+                        if useGradient:
+                            _sepFloorA2 = sepFloorA2
+                            _sepFloorT2 = sepFloorT2
+                            _sepA2 = sepA2
+                            _sepT2 = sepT2
+                        else:
+                            _sepFloor2 = sepFloor2
+                            _sep2 = sep2
+
+                    # calculate distances
+                    xDist = nearby_placments_xi - xi
+                    yDist = nearby_placments_yi - yi
+
+                    # Get the indicies in the possible range
+                    # pir => Possibly In Range,
+                    pir = np.logical_and(
+                        xDist<=sepCeil,
+                        yDist<=sepCeil,
+                    )
+
+                    xDist = xDist[pir]
+                    yDist = yDist[pir]
+
+                    # only continue if there are no points in the immediate range of the whole pixel
+                    if useGradient:
+                        if isinstance(axialDirection, np.ndarray):
+                            grad = np.radians(axialDirection[yi, xi])
+                        else:
+                            grad = axialDirection
+
+                        cG = np.cos(grad)
+                        sG = np.sin(grad)
+
+                        dist = np.power((xDist * cG - yDist * sG), 2) / _sepFloorA2 +\
+                            np.power(
+                                (xDist * sG + yDist * cG), 2) / _sepFloorT2
+
+                        immidiatelyInRange = dist <= 1
+
+                    else:
+                        immidiatelyInRange = np.power(
+                            xDist, 2) + np.power(yDist, 2) <= _sepFloor2
+
+                    if immidiatelyInRange.any():
+                        workingAvailability[yi, xi] = 0 # exclude pixel from later considerations
+                        continue
+
+                    # Determine if a placement has been found
+                    placement_group = placement_groups[(y_group, x_group)]
+                    placement_group['xi'].append(xi)
+                    placement_group['yi'].append(yi)
+                    placement_group['threshold'].append(threshold)
+                    placement_group['id'].append(placement_id)
+                    placement_id+=1
+
+                    nearby_placments_xi = np.concatenate([nearby_placments_xi, [xi]])
+                    nearby_placments_yi = np.concatenate([nearby_placments_yi, [yi]])
+
+                    # Apply stamp to workingAvailabilityMatrix
+                    if _stamping:
+                        if xi - stampWidth < 0:
+                            _x_low = 0
+                            _x_low_stamp = stampWidth - xi
+                        else:
+                            _x_low = xi - stampWidth
+                            _x_low_stamp = 0
+
+                        if yi - stampWidth < 0:
+                            _y_low = 0
+                            _y_low_stamp = stampWidth - yi
+                        else:
+                            _y_low = yi - stampWidth
+                            _y_low_stamp = 0
+
+                        if xi + stampWidth > (xN - 1):
+                            _x_high = xN - 1
+                            _x_high_stamp = stampWidth + (xN - xi - 1)
+                        else:
+                            _x_high = xi + stampWidth
+                            _x_high_stamp = stampWidth + stampWidth
+
+                        if yi + stampWidth > (yN - 1):
+                            _y_high = yN - 1
+                            _y_high_stamp = stampWidth + (yN - yi - 1)
+                        else:
+                            _y_high = yi + stampWidth
+                            _y_high_stamp = stampWidth + stampWidth
+
+                        _stamp = stamp[_y_low_stamp:_y_high_stamp + 1,
+                                    _x_low_stamp:_x_high_stamp + 1]
+
+                        workingAvailability[_y_low:_y_high + 1,
+                                            _x_low:_x_high + 1] *= _stamp
+                        tieredWorkingAvailability[_y_low:_y_high + 1,
+                                            _x_low:_x_high + 1] *= _stamp
+
+        
+        # Convert identified points back into the region's coordinates
+        keys = placement_groups.keys()
+        all_xi = np.concatenate([placement_groups[key]['xi'] for key in keys])
+        all_yi = np.concatenate([placement_groups[key]['yi'] for key in keys])
+
+        coords = pd.DataFrame()
+        coords['x_native'] = self.region.extent.xMin + (all_xi + 0.5) * self.region.pixelWidth
+        coords['y_native'] = self.region.extent.yMax - (all_yi + 0.5) * self.region.pixelHeight
+        
+
+        coords4326 = gk.srs.xyTransform(
+                coords[['x_native','y_native']].values, 
+                fromSRS=self.region.srs, 
+                toSRS=gk.srs.EPSG4326,
+                outputFormat="xy")
+
+        coords['longitude'] = coords4326.x
+        coords['latitude'] = coords4326.y
+
+        coords['threshold'] = np.concatenate([placement_groups[key]['threshold'] for key in keys])
+        coords['id'] = np.concatenate([placement_groups[key]['id'] for key in keys]).astype(int)
+
+        self.items = coords
+
+        # Filter by max acceptable distance, maybe
+        # TODO: Move this into its own function
+        if maxAcceptableDistance is not None:
+            try:
+                maxAcceptableDistance = [float(x) for x in maxAcceptableDistance]
+            except:
+                maxAcceptableDistance = [float(maxAcceptableDistance)]
+
+            maxAcceptableDistance2 = np.power(maxAcceptableDistance, 2)
+
+            sel = []
+            for i in range(self.items.shape[0]):
+                x = self.items['x_native'].values[i]
+                y = self.items['y_native'].values[i]
+
+                X = np.concatenate((self.items['x_native'].values[:i, 0], self.items['x_native'].values[(i + 1):, 0]))
+                Y = np.concatenate((self.items['y_native'].values[:i, 1], self.items['y_native'].values[(i + 1):, 1]))
+                subsel = np.abs(X - x) <= max(maxAcceptableDistance)
+                subsel *= np.abs(Y - y) <= max(maxAcceptableDistance)
+
+                subX = X[subsel]
+                subY = Y[subsel]
+                dist2 = np.power(subX - x, 2) + np.power(subY - y, 2)
+
+                if dist2.shape[0] < len(maxAcceptableDistance2):
+                    sel.append(False)
+                else:
+                    isokay = True
+                    dist2 = np.sort(dist2)
+                    for j, md2 in enumerate(maxAcceptableDistance2):
+                        isokay = isokay and dist2[j] <= md2
+                    sel.append(isokay)
+
+            self.items = self.items[sel]
+
+        return self.items
