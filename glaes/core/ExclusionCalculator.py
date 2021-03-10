@@ -1856,21 +1856,38 @@ class ExclusionCalculator(object):
             if not len(geoms) == len(s._itemCoords):
                 raise GlaesError("Mismatching geometry count")
 
-            # Create a list of geometry from each region WITH availability
+            # Create a list of geometries from each region WITH availability
             vec = gk.vector.createVector(
                 geoms, fieldVals={"pid": range(1, len(geoms) + 1)}
             )
+
             areaMap = s.region.rasterize(vec, value="pid", dtype=int) * (
-                s._availability > threshold
+                s._availability > 0
             )
 
             geoms = gk.geom.polygonizeMatrix(
                 areaMap, bounds=s.region.extent, srs=s.region.srs, flat=True
-            )
-            geoms = list(filter(lambda x: x.Area() >= minArea, geoms.geom))
+            ).geom
+
+            # Determine the availability-weighted area of each region
+            geom_areas = []
+            for pid in range(1, len(geoms) + 1):
+                sel = np.nonzero(areaMap == pid)
+                geom_areas.append(
+                    s._availability[sel].sum()
+                    / 100
+                    * s.region.pixelWidth
+                    * s.region.pixelHeight
+                )
+
+            geom_df = pd.DataFrame({"geom": geoms, "area_avail": geom_areas})
+
+            if minArea is not None:
+                # Do a final limit by the min area
+                geom_df = geom_df[geom_df.area_avail >= minArea]
 
             # Save in the s._areas container
-            s._areas = geoms
+            s._areas = geom_df
 
         # Make shapefile
         if not output is None:
@@ -1882,11 +1899,14 @@ class ExclusionCalculator(object):
             # Should the locations be converted to areas?
             if asArea:
                 if not srs.IsSame(s.region.srs):
-                    geoms = gk.geom.transform(geoms, fromSRS=s.region.srs, toSRS=srs)
+                    geoms = gk.geom.transform(
+                        s._areas.geom, fromSRS=s.region.srs, toSRS=srs
+                    )
+                else:
+                    geoms = s._areas.geom
 
                 # Add 'area' column
-                areas = [g.Area() for g in geoms]
-                geoms = pd.DataFrame({"geom": geoms, "area": areas})
+                geoms = pd.DataFrame({"geom": geoms, "area_avail": s._areas.area_avail})
 
             else:  # Just write the points
                 geoms = gk.LocationSet(s._itemCoords, srs=s.srs).asGeom(
