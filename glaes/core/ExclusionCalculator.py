@@ -1870,17 +1870,19 @@ class ExclusionCalculator(object):
             ).geom
 
             # Determine the availability-weighted area of each region
-            geom_areas = []
+            perc_avail = []
+            area_total = []
             for pid in range(1, len(geoms) + 1):
                 sel = np.nonzero(areaMap == pid)
-                geom_areas.append(
-                    s._availability[sel].sum()
-                    / 100
-                    * s.region.pixelWidth
-                    * s.region.pixelHeight
+                perc_avail.append(s._availability[sel].mean())
+                area_total.append(
+                    sel[0].shape[0] * s.region.pixelWidth * s.region.pixelHeight
                 )
 
-            geom_df = pd.DataFrame({"geom": geoms, "area_avail": geom_areas})
+            geom_df = pd.DataFrame(
+                {"geom": geoms, "perc_avail": perc_avail, "area_total": area_total}
+            )
+            geom_df["area_avail"] = geom_df.perc_avail / 100 * geom_df.area_total
 
             if minArea is not None:
                 # Do a final limit by the min area
@@ -1906,7 +1908,14 @@ class ExclusionCalculator(object):
                     geoms = s._areas.geom
 
                 # Add 'area' column
-                geoms = pd.DataFrame({"geom": geoms, "area_avail": s._areas.area_avail})
+                geoms = pd.DataFrame(
+                    {
+                        "geom": geoms,
+                        "area_avail": s._areas.area_avail,
+                        "area_total": s._areas.area_total,
+                        "perc_avail": s._areas.perc_avail,
+                    }
+                )
 
             else:  # Just write the points
                 geoms = gk.LocationSet(s._itemCoords, srs=s.srs).asGeom(
