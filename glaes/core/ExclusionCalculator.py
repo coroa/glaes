@@ -1233,8 +1233,15 @@ class ExclusionCalculator(object):
 
         if not "buffer" in exclusion_set.columns:
             exclusion_set["buffer"] = 0
-        if not "exclusion_mode" in exclusion_set.columns:
-            exclusion_set["exclusion_mode"] = "exclude"
+        if not "mode" in exclusion_set.columns:
+            if "exclusion_mode" in exclusion_set.columns:
+                warn(
+                    "excludeSet: `exclusion_mode` has been renamed to `mode`!",
+                    DeprecationWarning,
+                )
+                exclusion_set["mode"] = exclusion_set["exclusion_mode"]
+            else:
+                exclusion_set["mode"] = "exclude"
         if not "invert" in exclusion_set.columns:
             exclusion_set["invert"] = False
         if not "resolutionDiv" in exclusion_set.columns:
@@ -1257,7 +1264,7 @@ class ExclusionCalculator(object):
                             row["name"],
                             row.value,
                             buffer,
-                            row.exclusion_mode,
+                            row.mode,
                             row.invert,
                         )
                     )
@@ -1277,7 +1284,7 @@ class ExclusionCalculator(object):
                     value=value,
                     buffer=buffer,
                     invert=row.invert,
-                    mode=row.exclusion_mode,
+                    mode=row.mode,
                 )
 
             elif row.type == "raster":
@@ -1285,7 +1292,7 @@ class ExclusionCalculator(object):
                 if verbose:
                     glaes_logger.info(
                         "Excluding Raster {} with value {}, buffer {}, mode {}, and invert {} ".format(
-                            row["name"], value, buffer, row.exclusion_mode, row.invert
+                            row["name"], value, buffer, row.mode, row.invert
                         )
                     )
 
@@ -1312,7 +1319,7 @@ class ExclusionCalculator(object):
                         resolutionDiv=row.resolutionDiv,
                         prewarp=False,
                         invert=row.invert,
-                        mode=row.exclusion_mode,
+                        mode=row.mode,
                     )
 
             elif row.type == "vector":
@@ -1322,7 +1329,7 @@ class ExclusionCalculator(object):
                             row["name"],
                             row.value,
                             buffer,
-                            row.exclusion_mode,
+                            row.mode,
                             row.invert,
                         )
                     )
@@ -1356,7 +1363,7 @@ class ExclusionCalculator(object):
                         buffer=buffer,
                         resolutionDiv=row.resolutionDiv,
                         invert=row.invert,
-                        mode=row.exclusion_mode,
+                        mode=row.mode,
                     )
 
         if verbose:
