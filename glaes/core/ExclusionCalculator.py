@@ -1264,7 +1264,7 @@ class ExclusionCalculator(object):
                             row["name"],
                             row.value,
                             buffer,
-                            row.mode,
+                            row["mode"],
                             row.invert,
                         )
                     )
@@ -1284,7 +1284,7 @@ class ExclusionCalculator(object):
                     value=value,
                     buffer=buffer,
                     invert=row.invert,
-                    mode=row.mode,
+                    mode=row["mode"],
                 )
 
             elif row.type == "raster":
@@ -1292,7 +1292,7 @@ class ExclusionCalculator(object):
                 if verbose:
                     glaes_logger.info(
                         "Excluding Raster {} with value {}, buffer {}, mode {}, and invert {} ".format(
-                            row["name"], value, buffer, row.mode, row.invert
+                            row["name"], value, buffer, row["mode"], row.invert
                         )
                     )
 
@@ -1319,7 +1319,7 @@ class ExclusionCalculator(object):
                         resolutionDiv=row.resolutionDiv,
                         prewarp=False,
                         invert=row.invert,
-                        mode=row.mode,
+                        mode=row["mode"],
                     )
 
             elif row.type == "vector":
@@ -1329,7 +1329,7 @@ class ExclusionCalculator(object):
                             row["name"],
                             row.value,
                             buffer,
-                            row.mode,
+                            row["mode"],
                             row.invert,
                         )
                     )
@@ -1363,7 +1363,7 @@ class ExclusionCalculator(object):
                         buffer=buffer,
                         resolutionDiv=row.resolutionDiv,
                         invert=row.invert,
-                        mode=row.mode,
+                        mode=row["mode"],
                     )
 
         if verbose:
