@@ -2,14 +2,14 @@ from setuptools import setup, find_packages
 
 setup(
     name="glaes",
-    version="1.2.2",
+    version="1.3.0",
     author="Severin Ryberg",
-    url="https://github.com/FZJ-IEK3-VSA/glaes",
+    url="https://github.com/coroa/glaes",
     packages=find_packages(),
     include_package_data=True,
     install_requires=[
-        "geokit>=1.2.8",
-        "gdal>2.0.0,<3.0.0",
+        "geokit>=1.4.0",
+        "gdal>=3,<4",
         "numpy",
         "descartes",
         "pandas",

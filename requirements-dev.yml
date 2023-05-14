@@ -7,9 +7,9 @@ dependencies:
   - pytest-cov
   - pylint
   - autopep8
-  - jupyter
-  - notebook
-  - jupyterlab
+  # - jupyter
+  # - notebook
+  # - jupyterlab
   - pip
   - matplotlib
   - descartes
@@ -17,7 +17,7 @@ dependencies:
   - numpy
   - scipy
   - scikit-learn
-  - gdal>2.2.0,<3.0.0
+  - gdal>=3,<4
   - pip:
-      - https://github.com/FZJ-IEK3-VSA/geokit/archive/v1.2.8.zip
+      - git+https://github.com/coroa/geokit.git@v1.4.0#egg=geokit
       - -e .

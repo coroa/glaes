@@ -6,7 +6,7 @@ from collections import namedtuple, defaultdict
 from warnings import warn
 import pandas as pd
 import hashlib
-from osgeo import gdal
+from osgeo import gdal, ogr
 from typing import Union, List, Dict, Tuple
 
 
@@ -220,9 +220,6 @@ class ExclusionCalculator(object):
             and isinstance(srs, str)
             and srs[0:4] == "LAEA"
         ):
-            import osr
-            import ogr
-
             if len(srs) > 4:  # A center point was given
                 m = re.compile("LAEA:([0-9.-]+),([0-9.-]+)").match(srs)
                 if m is None:
@@ -254,12 +251,7 @@ class ExclusionCalculator(object):
                         "Automatic center determination is only possible when the 'region' input is an ogr.Geometry Object or a path to a vector file"
                     )
 
-            srs = osr.SpatialReference()
-            srs.ImportFromProj4(
-                "+proj=laea +lat_0={} +lon_0={} +x_0=0 +y_0=0 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs".format(
-                    center_y, center_x
-                )
-            )
+            srs = gk.srs.centeredLAEA(center_x, center_y)
 
         # load the region
         s.region = gk.RegionMask.load(
@@ -277,9 +269,9 @@ class ExclusionCalculator(object):
         s.dtype = dtype
         s._availability = np.array(s.region.mask, dtype=s.dtype) * 100
 
-        if initialValue == True:
+        if initialValue is True:
             pass
-        elif initialValue == False:
+        elif initialValue is False:
             s._availability *= 0
         elif isinstance(initialValue, str):
             assert isfile(initialValue)
