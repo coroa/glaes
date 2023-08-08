@@ -1945,12 +1945,12 @@ class ExclusionCalculator(object):
                 )
         else:
             points = np.array(points)
-            s = points[:, 0] >= s.region.extent.xMin
-            s = s & (points[:, 0] <= s.region.extent.xMax)
-            s = s & (points[:, 1] >= s.region.extent.yMin)
-            s = s & (points[:, 1] <= s.region.extent.yMax)
+            x = points[:, 0] >= s.region.extent.xMin
+            x = x & (points[:, 0] <= s.region.extent.xMax)
+            x = x & (points[:, 1] >= s.region.extent.yMin)
+            x = x & (points[:, 1] <= s.region.extent.yMax)
 
-            if not s.any():
+            if not x.any():
                 raise GlaesError("None of the given points are in the extent")
 
         ext = s.region.extent.pad(_voronoiBoundaryPadding, percent=True)
@@ -2007,11 +2007,29 @@ class ExclusionCalculator(object):
         geoms = gk.geom.polygonizeMatrix(
             areaMap, bounds=s.region.extent, srs=s.region.srs, flat=True
         )
-        geoms = list(filter(lambda x: x.Area() >= minArea, geoms.geom))
+
+        # Determine the availability-weighted area of each region
+        perc_avail = []
+        area_total = []
+        for pid in range(1, len(geoms) + 1):
+            sel = np.nonzero(areaMap == pid)
+            perc_avail.append(s._availability[sel].mean())
+            area_total.append(
+                sel[0].shape[0] * s.region.pixelWidth * s.region.pixelHeight
+            )
+
+        geom_df = pd.DataFrame(
+            {"geom": geoms, "perc_avail": perc_avail, "area_total": area_total}
+        )
+        geom_df["area_avail"] = geom_df.perc_avail / 100 * geom_df.area_total
+
+        if minArea is not None:
+            # Do a final limit by the min area
+            geom_df = geom_df[geom_df.area_avail >= minArea]
 
         # Save in the s._areas container
-        s._areas = geoms
-        return geoms
+        s._areas = geom_df
+        return geom_df
 
     def saveItems(s, output, srs=None, data=None):
         # Get srs
@@ -2041,16 +2059,17 @@ class ExclusionCalculator(object):
 
         # transform?
         if not srs.IsSame(s.region.srs):
-            geoms = gk.geom.transform(s._areas, fromSRS=s.region.srs, toSRS=srs)
+            geoms = gk.geom.transform(s._areas.geom, fromSRS=s.region.srs, toSRS=srs)
         else:
-            geoms = s._areas
+            geoms = s._areas.geom
+        
+        geom_df = s._areas.assign(geom=geoms)
 
         # make shapefile
         if data is None:
-            data = pd.DataFrame(dict(geom=geoms))
+            data = geom_df
         else:
-            data = pd.DataFrame(data)
-            data["geom"] = geoms
+            data = pd.concat([pd.DataFrame(data), geom_df], axis=1)
 
         return gk.vector.createVector(data, output=output)
 
