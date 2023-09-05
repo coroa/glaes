@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="glaes",
-    version="1.3.1",
+    version="1.3.2",
     author="Severin Ryberg",
     url="https://github.com/coroa/glaes",
     packages=find_packages(),
