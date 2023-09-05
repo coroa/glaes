@@ -2019,7 +2019,7 @@ class ExclusionCalculator(object):
             )
 
         geom_df = pd.DataFrame(
-            {"geom": geoms, "perc_avail": perc_avail, "area_total": area_total}
+            {"geom": geoms["geom"], "perc_avail": perc_avail, "area_total": area_total}
         )
         geom_df["area_avail"] = geom_df.perc_avail / 100 * geom_df.area_total
 
