@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="glaes",
-    version="1.3.2",
+    version="1.3.3",
     author="Severin Ryberg",
     url="https://github.com/coroa/glaes",
     packages=find_packages(),
@@ -15,5 +15,6 @@ setup(
         "pandas",
         "scipy",
         "matplotlib",
+        "tqdm",
     ],
 )

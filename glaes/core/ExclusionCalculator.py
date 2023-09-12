@@ -1,4 +1,5 @@
 import geokit as gk
+from tqdm.auto import tqdm
 import re
 import numpy as np
 from os.path import isfile
@@ -1584,6 +1585,8 @@ class ExclusionCalculator(object):
         # subtract a tiny bit to the right/bottom edge for the same reason
         substeps[-1] -= 0.0001
 
+        pbar = tqdm(total=workingAvailability.sum(), desc="Distributing")
+        pbar_steps = workingAvailability.sum(axis=1)
         for yi in range(yN):
             # update the "bottom" value
             # find only those values which have a y-component greater than the separation distance
@@ -1748,6 +1751,10 @@ class ExclusionCalculator(object):
                         workingAvailability[
                             _y_low : _y_high + 1, _x_low : _x_high + 1
                         ] *= _stamp
+
+            pbar.update(pbar_steps[yi])
+
+        pbar.close()
 
         # Convert identified points back into the region's coordinates
         coords = np.zeros((cnt, 2))
