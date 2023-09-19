@@ -798,7 +798,6 @@ class ExclusionCalculator(object):
             and gk.raster.rasterInfo(intermediate).meta == metadata
             and s._hasEqualContext(intermediate)
         ):
-
             if s.verbose and intermediate is not None:
                 glaes_logger.info(
                     "Applying intermediate exclusion file: " + intermediate
@@ -973,7 +972,6 @@ class ExclusionCalculator(object):
             and gk.raster.rasterInfo(intermediate).meta == metadata
             and s._hasEqualContext(intermediate)
         ):
-
             if s.verbose and intermediate is not None:
                 glaes_logger.info(
                     "Applying intermediate exclusion file: " + intermediate
@@ -1104,7 +1102,6 @@ class ExclusionCalculator(object):
 
         # Check the value input
         if isinstance(value, tuple):
-
             # Check the boundaries
             if not value[0] is None:
                 prior.containsValue(value[0], True)
@@ -1402,8 +1399,6 @@ class ExclusionCalculator(object):
         maxItems=10000000,
         outputSRS=None,
         output=None,
-        asArea=False,
-        minArea=100000,
         maxAcceptableDistance=None,
         axialDirection=None,
         sepScaling=None,
@@ -1526,8 +1521,8 @@ class ExclusionCalculator(object):
             sepA = sepA * sepScaling / pixelRes
             sepT = sepT * sepScaling / pixelRes
 
-            sepA2 = sepA ** 2
-            sepT2 = sepT ** 2
+            sepA2 = sepA**2
+            sepT2 = sepT**2
 
             sepFloorA = np.maximum(sepA - np.sqrt(2), 0)
             sepFloorT = np.maximum(sepT - np.sqrt(2), 0)
@@ -1552,7 +1547,7 @@ class ExclusionCalculator(object):
             separation = separation * sepScaling / pixelRes
             sep2 = np.power(separation, 2)
             sepFloor = np.maximum(separation - np.sqrt(2), 0)
-            sepFloor2 = sepFloor ** 2
+            sepFloor2 = sepFloor**2
             sepCeil = separation + 1
 
             stampFloor = sepFloor2.min() if matrixScaling else sepFloor2
@@ -1765,7 +1760,7 @@ class ExclusionCalculator(object):
 
         s._itemCoords = coords
 
-        if not outputSRS is None:
+        if outputSRS is not None:
             newCoords = gk.srs.xyTransform(
                 coords, fromSRS=s.region.srs, toSRS=outputSRS
             )
@@ -1810,138 +1805,29 @@ class ExclusionCalculator(object):
             s._itemCoords = s._itemCoords[sel, :]
             s.itemCoords = s.itemCoords[sel, :]
 
-        # Make areas
-        if asArea:
-            warn(
-                "Area distribution will soon be removed from 'distributeItems'. Use 'distributeArea' instead",
-                DeprecationWarning,
-            )
-
-            ext = s.region.extent.pad(_voronoiBoundaryPadding, percent=True)
-
-            # Do Voronoi
-            from scipy.spatial import Voronoi
-
-            # Add boundary points around the 'good' points so that we get bounded regions for each 'good' point
-            pts = np.concatenate(
-                [
-                    s._itemCoords,
-                    [
-                        (x, ext.yMin)
-                        for x in np.linspace(ext.xMin, ext.xMax, _voronoiBoundaryPoints)
-                    ],
-                    [
-                        (x, ext.yMax)
-                        for x in np.linspace(ext.xMin, ext.xMax, _voronoiBoundaryPoints)
-                    ],
-                    [
-                        (ext.xMin, y)
-                        for y in np.linspace(ext.yMin, ext.yMax, _voronoiBoundaryPoints)
-                    ][1:-1],
-                    [
-                        (ext.xMax, y)
-                        for y in np.linspace(ext.yMin, ext.yMax, _voronoiBoundaryPoints)
-                    ][1:-1],
-                ]
-            )
-
-            v = Voronoi(pts)
-
-            # Create regions
-            geoms = []
-            for reg in v.regions:
-                path = []
-                if -1 in reg or len(reg) == 0:
-                    continue
-                for pid in reg:
-                    path.append(v.vertices[pid])
-                path.append(v.vertices[reg[0]])
-
-                geoms.append(gk.geom.polygon(path, srs=s.region.srs))
-
-            if not len(geoms) == len(s._itemCoords):
-                raise GlaesError("Mismatching geometry count")
-
-            # Create a list of geometries from each region WITH availability
-            vec = gk.vector.createVector(
-                geoms, fieldVals={"pid": range(1, len(geoms) + 1)}
-            )
-
-            areaMap = s.region.rasterize(vec, value="pid", dtype=int) * (
-                s._availability > 0
-            )
-
-            geoms = gk.geom.polygonizeMatrix(
-                areaMap, bounds=s.region.extent, srs=s.region.srs, flat=True
-            ).geom
-
-            # Determine the availability-weighted area of each region
-            perc_avail = []
-            area_total = []
-            for pid in range(1, len(geoms) + 1):
-                sel = np.nonzero(areaMap == pid)
-                perc_avail.append(s._availability[sel].mean())
-                area_total.append(
-                    sel[0].shape[0] * s.region.pixelWidth * s.region.pixelHeight
-                )
-
-            geom_df = pd.DataFrame(
-                {"geom": geoms, "perc_avail": perc_avail, "area_total": area_total}
-            )
-            geom_df["area_avail"] = geom_df.perc_avail / 100 * geom_df.area_total
-
-            if minArea is not None:
-                # Do a final limit by the min area
-                geom_df = geom_df[geom_df.area_avail >= minArea]
-
-            # Save in the s._areas container
-            s._areas = geom_df
 
         # Make shapefile
-        if not output is None:
+        if output is not None:
             warn(
                 "Shapefile output will soon be removed from 'distributeItems'. Use 'saveItems' or 'saveAreas' instead",
                 DeprecationWarning,
             )
-            srs = gk.srs.loadSRS(outputSRS) if not outputSRS is None else s.region.srs
+            srs = gk.srs.loadSRS(outputSRS) if outputSRS is not None else s.region.srs
             # Should the locations be converted to areas?
-            if asArea:
-                if not srs.IsSame(s.region.srs):
-                    geoms = gk.geom.transform(
-                        s._areas.geom, fromSRS=s.region.srs, toSRS=srs
-                    )
-                else:
-                    geoms = s._areas.geom
-
-                # Add 'area' column
-                geoms = pd.DataFrame(
-                    {
-                        "geom": geoms,
-                        "area_avail": s._areas.area_avail,
-                        "area_total": s._areas.area_total,
-                        "perc_avail": s._areas.perc_avail,
-                    }
-                )
-
-            else:  # Just write the points
-                geoms = gk.LocationSet(s._itemCoords, srs=s.srs).asGeom(
-                    srs=srs if outputSRS is None else outputSRS
-                )
+            geoms = gk.LocationSet(s._itemCoords, srs=s.srs).asGeom(
+                srs=srs if outputSRS is None else outputSRS
+            )
 
             gk.vector.createVector(geoms, output=output)
         else:
-            if asArea:
-                return geoms
-            else:
-                return coords
+            return coords
 
     def distributeAreas(
         s,
         points=None,
         minArea=100000,
-        threshold=50,
-        _voronoiBoundaryPoints=10,
-        _voronoiBoundaryPadding=5,
+        threshold=0,
+        asArea=True,
     ):
         if points is None:
             try:
@@ -1960,50 +1846,20 @@ class ExclusionCalculator(object):
             if not x.any():
                 raise GlaesError("None of the given points are in the extent")
 
-        ext = s.region.extent.pad(_voronoiBoundaryPadding, percent=True)
-
+    
         # Do Voronoi
         from scipy.spatial import Voronoi
-
-        # Add boundary points around the 'good' points so that we get bounded regions for each 'good' point
-        pts = np.concatenate(
-            [
-                points,
-                [
-                    (x, ext.yMin)
-                    for x in np.linspace(ext.xMin, ext.xMax, _voronoiBoundaryPoints)
-                ],
-                [
-                    (x, ext.yMax)
-                    for x in np.linspace(ext.xMin, ext.xMax, _voronoiBoundaryPoints)
-                ],
-                [
-                    (ext.xMin, y)
-                    for y in np.linspace(ext.yMin, ext.yMax, _voronoiBoundaryPoints)
-                ][1:-1],
-                [
-                    (ext.xMax, y)
-                    for y in np.linspace(ext.yMin, ext.yMax, _voronoiBoundaryPoints)
-                ][1:-1],
-            ]
+        v = Voronoi(
+            np.concatenate([points, s.region.extent.pad(200, percent=True).corners()])
         )
-
-        v = Voronoi(pts)
 
         # Create regions
         geoms = []
-        for reg in v.regions:
-            path = []
-            if -1 in reg or len(reg) == 0:
-                continue
-            for pid in reg:
-                path.append(v.vertices[pid])
-            path.append(v.vertices[reg[0]])
-
-            geoms.append(gk.geom.polygon(path, srs=s.region.srs))
-
-        if not len(geoms) == len(s._itemCoords):
-            raise RuntimeError("Mismatching geometry count")
+        for i in range(len(points)):
+            reg = v.regions[v.point_region[i]]
+            geoms.append(
+                gk.geom.polygon(v.vertices[np.r_[reg, reg[0]]], srs=s.region.srs)
+            )
 
         # Create a list of geometry from each region WITH availability
         vec = gk.vector.createVector(geoms, fieldVals={"pid": range(1, len(geoms) + 1)})
@@ -2011,24 +1867,34 @@ class ExclusionCalculator(object):
             s._availability > threshold
         )
 
-        geoms = gk.geom.polygonizeMatrix(
-            areaMap, bounds=s.region.extent, srs=s.region.srs, flat=True
+        # Create availability statistics
+        pixels_per_voronoi = np.bincount(areaMap.ravel(), minlength=1)
+        sums_avail_per_voronoi = np.bincount(
+            areaMap.ravel(), s._availability.ravel(), minlength=1
         )
+        with np.errstate(divide="ignore", invalid="ignore"):
+            perc_avail = sums_avail_per_voronoi / pixels_per_voronoi
+        perc_avail[pixels_per_voronoi == 0] = 0
 
-        # Determine the availability-weighted area of each region
-        perc_avail = []
-        area_total = []
-        for pid in range(1, len(geoms) + 1):
-            sel = np.nonzero(areaMap == pid)
-            perc_avail.append(s._availability[sel].mean())
-            area_total.append(
-                sel[0].shape[0] * s.region.pixelWidth * s.region.pixelHeight
-            )
+        pixel_size = s.region.pixelWidth * s.region.pixelHeight
+        area_total = pixels_per_voronoi * pixel_size
+        area_avail = (sums_avail_per_voronoi / 100) * pixel_size
+        
+        if asArea:
+            geoms = gk.geom.polygonizeMatrix(
+                areaMap, bounds=s.region.extent, srs=s.region.srs, flat=True
+            )["geom"]
+        else:
+            geoms = gk.LocationSet(points, srs=s.region.srs).asGeom()
 
         geom_df = pd.DataFrame(
-            {"geom": geoms["geom"], "perc_avail": perc_avail, "area_total": area_total}
+            {
+                "geom": geoms,
+                "perc_avail": perc_avail[1:],
+                "area_total": area_total[1:],
+                "area_avail": area_avail[1:],
+            }
         )
-        geom_df["area_avail"] = geom_df.perc_avail / 100 * geom_df.area_total
 
         if minArea is not None:
             # Do a final limit by the min area
@@ -2040,7 +1906,7 @@ class ExclusionCalculator(object):
 
     def saveItems(s, output, srs=None, data=None):
         # Get srs
-        srs = gk.srs.loadSRS(srs) if not srs is None else s.region.srs
+        srs = gk.srs.loadSRS(srs) if srs is not None else s.region.srs
 
         # transform?
         if not srs.IsSame(s.region.srs):
@@ -2062,14 +1928,14 @@ class ExclusionCalculator(object):
 
     def saveAreas(s, output, srs=None, data=None):
         # Get srs
-        srs = gk.srs.loadSRS(srs) if not srs is None else s.region.srs
+        srs = gk.srs.loadSRS(srs) if srs is not None else s.region.srs
 
         # transform?
         if not srs.IsSame(s.region.srs):
             geoms = gk.geom.transform(s._areas.geom, fromSRS=s.region.srs, toSRS=srs)
         else:
             geoms = s._areas.geom
-        
+
         geom_df = s._areas.assign(geom=geoms)
 
         # make shapefile
@@ -2143,7 +2009,6 @@ class ExclusionCalculator(object):
         _voronoiBoundaryPadding=5,
         _stamping=True,
     ):
-
         # Preprocess availability
         workingAvailability = self._availability.copy()
         workingAvailability[~self.region.mask] = 0
@@ -2211,8 +2076,8 @@ class ExclusionCalculator(object):
             sepA = sepA * sepScaling / pixelRes
             sepT = sepT * sepScaling / pixelRes
 
-            sepA2 = sepA ** 2
-            sepT2 = sepT ** 2
+            sepA2 = sepA**2
+            sepT2 = sepT**2
 
             sepFloorA = np.maximum(sepA - np.sqrt(2), 0)
             sepFloorT = np.maximum(sepT - np.sqrt(2), 0)
@@ -2237,7 +2102,7 @@ class ExclusionCalculator(object):
             separation = separation * sepScaling / pixelRes
             sep2 = np.power(separation, 2)
             sepFloor = np.maximum(separation - np.sqrt(2), 0)
-            sepFloor2 = sepFloor ** 2
+            sepFloor2 = sepFloor**2
             sepCeil = separation + 1
 
             stampFloor = sepFloor2.min() if matrixScaling else sepFloor2
