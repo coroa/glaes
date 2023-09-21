@@ -285,7 +285,7 @@ class ExclusionCalculator(object):
         s.itemCoords = None
         s._itemCoords = None
         s._areas = None
-    
+
     @classmethod
     def load(cls, region, path, **kwargs):
         """Load exclusion calculator from a previous save operation
@@ -1822,7 +1822,6 @@ class ExclusionCalculator(object):
             s._itemCoords = s._itemCoords[sel, :]
             s.itemCoords = s.itemCoords[sel, :]
 
-
         # Make shapefile
         if output is not None:
             warn(
@@ -1863,9 +1862,9 @@ class ExclusionCalculator(object):
             if not x.any():
                 raise GlaesError("None of the given points are in the extent")
 
-    
         # Do Voronoi
         from scipy.spatial import Voronoi
+
         v = Voronoi(
             np.concatenate([points, s.region.extent.pad(200, percent=True).corners()])
         )
@@ -1896,21 +1895,29 @@ class ExclusionCalculator(object):
         pixel_size = s.region.pixelWidth * s.region.pixelHeight
         area_total = pixels_per_voronoi * pixel_size
         area_avail = (sums_avail_per_voronoi / 100) * pixel_size
-        
-        if asArea:
-            geoms = gk.geom.polygonizeMatrix(
-                areaMap, bounds=s.region.extent, srs=s.region.srs, flat=True
-            )["geom"]
-        else:
-            geoms = gk.LocationSet(points, srs=s.region.srs).asGeom()
 
-        geom_df = pd.DataFrame(
-            {
-                "geom": geoms,
-                "perc_avail": perc_avail[1:],
-                "area_total": area_total[1:],
-                "area_avail": area_avail[1:],
-            }
+        if asArea:
+            geoms = (
+                gk.geom.polygonizeMatrix(
+                    areaMap, bounds=s.region.extent, srs=s.region.srs, flat=True
+                )
+                .set_index("value")
+                .rename_axis("pid")
+                .geom
+            )
+        else:
+            geoms = pd.Series(gk.LocationSet(points, srs=s.region.srs).asGeom())
+
+        geom_df = (
+            pd.DataFrame(
+                {
+                    "perc_avail": perc_avail,
+                    "area_total": area_total,
+                    "area_avail": area_avail,
+                }
+            )
+            .reindex(geoms.index)
+            .assign(geom=geoms)
         )
 
         if minArea is not None:
