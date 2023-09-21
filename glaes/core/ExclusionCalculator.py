@@ -285,6 +285,23 @@ class ExclusionCalculator(object):
         s.itemCoords = None
         s._itemCoords = None
         s._areas = None
+    
+    @classmethod
+    def load(cls, region, path, **kwargs):
+        """Load exclusion calculator from a previous save operation
+
+        Parameters
+        ----------
+        region : str, ogr.Geometry, geokit.RegionMask
+            The regional definition for the land eligibility analysis
+        path : str, gdal.Dataset
+            File or loaded dataset that was previously stored with `ec.save`
+        **kwargs
+            Other arguments to __init__ like srs or pixelRes
+        """
+        ec = cls(region, **kwargs)
+        ec._availability = ec.region.warp(path).astype(ec.dtype)
+        return ec
 
     def applyAvailabilityThreshold(self, threshold: int = 50) -> None:
         """
@@ -326,7 +343,7 @@ class ExclusionCalculator(object):
             "units": "percent-available",
         }
 
-        data = s.availability
+        data = s._availability
         if not threshold is None:
             data = (data >= threshold).astype(s.dtype) * 100
 
